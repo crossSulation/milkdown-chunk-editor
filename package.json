@@ -1,0 +1,60 @@
+{
+  "name": "milkdown-chunk-editor",
+  "version": "0.1.0",
+  "description": "面向大文档的 Milkdown 富文本编辑器:按标题分片 + 视口虚拟化,只挂载可见区域的编辑器实例",
+  "keywords": [
+    "milkdown",
+    "prosemirror",
+    "editor",
+    "markdown",
+    "richtext",
+    "virtualization",
+    "chunk",
+    "large-document"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --import ./test/register-loader.mjs --test test/split.test.ts test/virtual-layout.test.ts test/e2e.test.ts test/perf.test.ts",
+    "test:bench": "node --experimental-strip-types --import ./test/register-loader.mjs test/benchmark.test.ts",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "peerDependencies": {
+    "@milkdown/kit": "^7.22.3"
+  },
+  "peerDependenciesMeta": {
+    "@milkdown/kit": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@milkdown/kit": "^7.22.3",
+    "@types/node": "^22.0.0",
+    "happy-dom": "^21.0.4",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3"
+  }
+}
