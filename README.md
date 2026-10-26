@@ -17,6 +17,32 @@ ProseMirror 会为文档中**每一个节点**创建一个 DOM 元素并保持�
 > 注意:`@milkdown/plugin-virtual-scroll`、`crepe.configure({ virtualization })` 等 API **并不存在**。
 > 网上相关教程给出的都是虚构代码,请勿照抄。
 
+## 浏览器兼容性
+
+包本身**不依赖任何 Node 内置模块**,产物是纯 ESM,可在浏览器 / WebView / Tauri 中直接运行。
+
+关于 `Node.fromJSON` —— 这里的 `Node` 是 **ProseMirror 的 Node 类**(`prosemirror-model`),
+不是 Node.js。它是纯 JS 实现,不碰 `process` / `Buffer` / `require`,浏览器里完全可用。
+
+已用真实 Chromium 验证(esbuild 打包 + Playwright 运行):
+
+```
+无 process / require / Buffer        ✓
+Node.fromJSON 路径可用                ✓
+ProseMirror 真实渲染                 ✓
+content-visibility 生效               ✓
+虚拟滚动正常(40 块文档只挂载 5 个)    ✓
+产物零 Node 内置模块引用              ✓
+```
+
+运行 `npm run test:browser` 可复现。
+
+### WebView 注意事项
+
+- `content-visibility: auto` 需要 **Chrome 85+ / Safari 18+**。更老的 WebView 会忽略它 ——
+  只是失去绘制优化,功能不受影响。
+- 首次挂载需要解析 markdown,大文档建议配合 `disableCache: false`(默认)复用缓存。
+
 ## 安装
 
 ```bash

@@ -35,6 +35,29 @@ jobs:
       - name: Build
         run: npm run build
 
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      # 真实浏览器验证:确认 Node.fromJSON 这条路径在浏览器里可用,
+      # 且产物不依赖任何 Node 内置模块。happy-dom 是模拟,替代不了这一步。
+      - name: Browser check
+        run: node scripts/browser-check.mjs
+
   publish-dry-run:
     runs-on: ubuntu-latest
     needs: test

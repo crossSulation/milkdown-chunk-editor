@@ -18,6 +18,30 @@ This package implements exactly that idea:
 
 > **Heads up:** APIs like `@milkdown/plugin-virtual-scroll` or `crepe.configure({ virtualization })` **do not exist**. Plenty of tutorials online show them, but that code is fictional. Don't copy it.
 
+## Browser compatibility
+
+The package depends on **no Node built-in modules** — the output is pure ESM and runs directly in browsers, WebViews and Tauri.
+
+About `Node.fromJSON` — the `Node` here is **ProseMirror's `Node` class** (`prosemirror-model`), not Node.js. It is a pure JS implementation that touches neither `process`, `Buffer` nor `require`, so it works fine in the browser.
+
+Verified against real Chromium (esbuild bundle + Playwright):
+
+```
+No process / require / Buffer        ✓
+Node.fromJSON path available          ✓
+ProseMirror renders for real          ✓
+content-visibility applied            ✓
+Virtual scrolling works (5 of 40 mounted)  ✓
+Zero Node built-in module references  ✓
+```
+
+Run `npm run test:browser` to reproduce.
+
+### WebView notes
+
+- `content-visibility: auto` requires **Chrome 85+ / Safari 18+**. Older WebViews ignore it — you only lose the paint optimization, functionality is unaffected.
+- The first mount has to parse markdown. For large documents, keep `disableCache: false` (the default) so the cache can be reused.
+
 ## Installation
 
 ```bash

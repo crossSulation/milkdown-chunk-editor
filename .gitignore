@@ -4,6 +4,7 @@ node_modules/
 # 构建产物
 dist/
 *.tgz
+scripts/.browser-build/
 
 # 日志
 *.log
