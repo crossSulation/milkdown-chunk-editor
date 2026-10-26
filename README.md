@@ -119,7 +119,7 @@ editor.destroy()
 
 **实测提速 4.1x。**
 
-### 三项关键优化
+### 五项关键优化
 
 **1. dirty 标记 —— 消除无谓的 stringify**
 
@@ -142,6 +142,38 @@ Milkdown 走 `Node.fromJSON` 路径 —— 3000 字符块上从 5.4ms 降到 0.0
 
 滚动事件与 `ResizeObserver` 都会触发同步,若不加保护,同一块会被挂载两个实例
 (内存翻倍且内容互相覆盖)。现在有重入保护 + in-flight 去重,并行挂载所有待加载块。
+
+**4. 高度表:Fenwick Tree**
+
+高度表原本是「数组前缀和 + 二分查找」,更新一块高度要 O(n) 全量重算。
+改成树状数组后,单次更新降到 O(log n):
+
+| 块数 | 旧实现(单次更新) | 新实现 | 加速比 |
+|---|---|---|---|
+| 100 | 0.22 μs | 0.19 μs | 1.2x |
+| 1 000 | 6.04 μs | 0.23 μs | 26x |
+| 10 000 | 44.7 μs | 0.14 μs | 319x |
+| 100 000 | 933 μs | 0.31 μs | 2985x |
+
+**但要说清楚:日常文档规模用不上。** 实测 80 块时,布局计算只占滚动耗时的 0.01%,
+被浏览器渲染开销完全淹没。要到约 3.5 万块,Fenwick 的优势才会占到滚动耗时的 5% 以上。
+
+保留它的理由是零成本、无副作用,且为超大文档留了余地。
+
+**5. 批量高度测量**
+
+原先每个块各自 `requestAnimationFrame` 一次测量。现在合并成一帧末尾统一处理:
+先读完所有高度,再统一写回。
+
+**实测收益为 0** —— 因为浏览器的样式写入会推迟到帧末,同帧内交替读写并不会触发
+多次布局。实测三种模式(只读 / 交替读写 / 批量读写)的 `LayoutCount` 完全相同。
+
+之所以仍然保留:一是逻辑更清晰(读阶段与写阶段分离),二是未来若调整
+`estimateHeight` 让估算更准、测量路径被频繁触发时,批量化的价值才会显现。
+
+> 顺带一提:实测高度估算其实很准(英文文档 1664px vs 预估 1644px,误差 1%),
+> 所以测量路径在真实场景几乎不触发 —— 这也是前面几项优化在浏览器里
+> 都测不出收益的根本原因:**当前瓶颈是浏览器渲染,不是 JS 计算。**
 
 ### 实例复用(`recycle`)
 
@@ -249,10 +281,13 @@ const { chunks, byId } = splitIntoChunks(md, 2)
 
 ```bash
 npm install
-npm run typecheck    # tsc --noEmit
-npm test             # tsx --test,20 项
-npm run test:bench   # 性能基准对比
-npm run build        # tsup → dist/
+npm run typecheck        # tsc --noEmit
+npm test                 # tsx --test,27 项
+npm run test:bench       # 性能基准对比(滚动场景)
+npm run test:layout      # 高度表数据结构基准(Fenwick vs 数组前缀和)
+npm run test:browser     # 真实 Chromium 验证
+npm run test:layout-compare  # 布局优化前后对照(需 git HEAD 作为基线)
+npm run build            # tsup → dist/
 ```
 
 测试使用 [tsx](https://github.com/privatenumber/tsx) 运行 TypeScript,无需额外编译步骤。

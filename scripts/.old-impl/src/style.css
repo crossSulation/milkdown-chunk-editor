@@ -1,0 +1,88 @@
+/* 分片滚动编辑器样式 */
+
+.editor-scroller {
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* 让 slot 的绝对定位以 scroller 为基准 */
+  contain: layout style;
+}
+
+.chunked-spacer {
+  /* 仅用于撑高,不参与渲染 */
+  z-index: -1;
+}
+
+.chunk-slot {
+  /* 关键:绝对定位 + 屏外跳过渲染 */
+  content-visibility: auto;
+  /* 滚动接近时浏览器提前恢复,避免白屏 */
+  contain-intrinsic-size: auto 600px;
+}
+
+/* 必须给容器一个 min-height,否则 content-visibility 生效前会塌陷 */
+.milkdown-chunk-root {
+  min-height: inherit;
+}
+
+.milkdown-chunk {
+  outline: none;
+}
+
+.milkdown-chunk:focus-visible {
+  outline: none;
+}
+
+/* 跨块边界的视觉提示:块间留白由 slot 承担 */
+.chunk-slot + .chunk-slot {
+  /* 相邻块不需要额外间距,间距写在 markdown 内容里 */
+}
+
+/* 大纲 */
+.doc-outline {
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.doc-outline-item {
+  display: block;
+  width: 100%;
+  padding: 4px 12px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.doc-outline-item:hover {
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+}
+
+.doc-outline-item[data-level='0'],
+.doc-outline-item[data-level='1'] {
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.doc-outline-item[data-level='2'] {
+  padding-left: 24px;
+}
+.doc-outline-item[data-level='3'] {
+  padding-left: 36px;
+}
+.doc-outline-item[data-level='4'],
+.doc-outline-item[data-level='5'],
+.doc-outline-item[data-level='6'] {
+  padding-left: 48px;
+}
+
+.doc-outline-item[data-active='true'] {
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+}

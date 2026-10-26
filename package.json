@@ -49,10 +49,12 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/split.test.ts test/virtual-layout.test.ts test/e2e.test.ts test/perf.test.ts test/recycle.test.ts test/recycle-e2e.test.ts",
+    "test": "tsx --test test/split.test.ts test/virtual-layout.test.ts test/layout-fenwick.test.ts test/e2e.test.ts test/perf.test.ts test/recycle.test.ts test/recycle-e2e.test.ts",
     "test:bench": "tsx test/benchmark.test.ts",
+    "test:layout": "tsx scripts/layout-bench.ts",
     "test:browser": "npm run build && node scripts/browser-check.mjs",
     "test:recycle": "npm run build && node scripts/recycle-browser-check.mjs",
+    "test:layout-compare": "npm run build && node scripts/layout-compare.mjs",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "peerDependencies": {

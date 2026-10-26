@@ -64,6 +64,10 @@ export class ChunkedEditor {
   private ro?: ResizeObserver;
   private frame = 0;
   private disposed = false;
+  /** 待测量的块,一帧末尾统一处理 */
+  private pendingMeasures = new Map<string, HTMLElement>();
+  /** 批量测量的 rAF 句柄 */
+  private measureFrame = 0;
   /** sync 是否正在执行,防止重入 */
   private syncing = false;
   /** 重入期间是否有新的同步请求 */
@@ -254,7 +258,7 @@ export class ChunkedEditor {
         }
         this.mounted.set(chunkId, inst);
         if (!this.disableCache) this.updateCache(chunkId, inst);
-        requestAnimationFrame(() => this.measure(chunkId, slot));
+        this.queueMeasure(chunkId, slot);
         return;
       }
 
@@ -292,7 +296,7 @@ export class ChunkedEditor {
       // 回填缓存:把当前 doc 的 JSON 存下来,下次挂载直接复用
       if (!this.disableCache) this.updateCache(chunkId, inst);
 
-      requestAnimationFrame(() => this.measure(chunkId, slot));
+      this.queueMeasure(chunkId, slot);
     } catch (err) {
       slot.remove();
       this.slots.delete(chunkId);
@@ -312,31 +316,82 @@ export class ChunkedEditor {
     }
   }
 
-  /** 实测高度回填,并做滚动锚定补偿 */
-  private measure(chunkId: string, slot: HTMLElement) {
-    const h = slot.getBoundingClientRect().height;
-    if (h <= 0) return;
+  /**
+   * 排队一个待测量的块,在一帧末尾统一测量。
+   *
+   * 为什么要批量:
+   *   `getBoundingClientRect()` 会强制浏览器同步计算布局(reflow),
+   *   而写 `style.top` 又会让布局失效。每个块各自一次 rAF 的话,
+   *   N 个块就是 N 次「读 → 写 → 再读」的循环,强制 N 次 reflow。
+   *
+   *   批量后:一帧内先读完所有高度(只触发一次 reflow),
+   *   再统一写回并调整位置(只触发一次重排)。
+   */
+  private queueMeasure(chunkId: string, slot: HTMLElement) {
+    this.pendingMeasures.set(chunkId, slot);
+    if (this.measureFrame) return;
+    this.measureFrame = requestAnimationFrame(() => {
+      this.measureFrame = 0;
+      this.flushMeasures();
+    });
+  }
 
-    const before = this.layout.getBox(chunkId);
-    if (!before) return;
+  /** 一帧末尾统一执行测量:先全部读,再全部写 */
+  private flushMeasures() {
+    if (this.disposed || this.pendingMeasures.size === 0) return;
 
-    // 只处理「比预估矮」的情况。
-    // 变高需要把下方所有内容往下推,会打断正在阅读的视线;
-    // 变矮只影响自身,补上差额并同步滚动位置即可,视觉上无感。
-    if (h >= before.height) return;
+    const entries = [...this.pendingMeasures];
+    this.pendingMeasures.clear();
 
-    // 该块整体位于视口上方时,高度变化必须同步补偿 scrollTop,
-    // 否则视口内容会瞬间跳动。判断依据是块底是否在滚动位置之上。
+    // ---- 读阶段:连续读取 getBoundingClientRect,浏览器只需布局一次 ----
+    // oldHeight 必须在更新前记下 —— updateHeight 之后 getBox 返回的是新高度,
+    // 那样算出来的补偿差恒为 0,滚动会跳动。
+    const measured: Array<{
+      chunkId: string;
+      height: number;
+      oldHeight: number;
+      aboveViewport: boolean;
+    }> = [];
+    // 补偿基准要在读阶段取,避免读阶段中途 scrollTop 被改动
     const scrollTop = this.scroller.scrollTop;
-    const isAboveViewport = before.top + before.height <= scrollTop;
 
-    if (!this.layout.updateHeight(chunkId, h)) return;
+    for (const [chunkId, slot] of entries) {
+      if (this.disposed) return;
+      const h = slot.getBoundingClientRect().height;
+      if (h <= 0) continue;
+
+      const before = this.layout.getBox(chunkId);
+      if (!before) continue;
+      // 只处理「比预估矮」的情况(见 measure 的说明)
+      if (h >= before.height) continue;
+
+      const isAboveViewport = before.top + before.height <= scrollTop;
+      measured.push({
+        chunkId,
+        height: h,
+        oldHeight: before.height,
+        aboveViewport: isAboveViewport,
+      });
+    }
+
+    if (measured.length === 0) return;
+
+    // ---- 写阶段:统一更新高度表,再统一重排 ----
+    let changed = false;
+    let compensation = 0;
+    for (const m of measured) {
+      if (!this.layout.updateHeight(m.chunkId, m.height)) continue;
+      changed = true;
+      if (m.aboveViewport) compensation += m.oldHeight - m.height;
+    }
+    if (!changed) return;
 
     this.spacer.style.height = `${this.layout.getTotalHeight()}px`;
     this.reposition();
 
-    if (isAboveViewport) {
-      this.scroller.scrollTop = Math.max(0, scrollTop - (before.height - h));
+    // 视口上方的块变矮时,必须同步补偿 scrollTop,否则视口内容会跳动
+    if (compensation > 0) {
+      this.scroller.scrollTop = Math.max(0, scrollTop - compensation);
     }
   }
 
@@ -381,6 +436,9 @@ export class ChunkedEditor {
   destroy() {
     this.disposed = true;
     cancelAnimationFrame(this.frame);
+    cancelAnimationFrame(this.measureFrame);
+    this.measureFrame = 0;
+    this.pendingMeasures.clear();
     this.ro?.disconnect();
     this.scroller.removeEventListener('scroll', this.onScroll);
     for (const inst of this.mounted.values()) void inst.destroy();

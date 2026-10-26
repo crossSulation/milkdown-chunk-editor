@@ -117,7 +117,7 @@ Scrolling scenario (mount + unmount 3 chunks):
 
 **Measured 4.1x speedup.**
 
-### The three key optimizations
+### The five key optimizations
 
 **1. Dirty flag — eliminates needless stringify**
 
@@ -134,6 +134,31 @@ The cache evicts via LRU, with a 32 MB default ceiling (tune with `cacheBytes`).
 **3. Sync deduplication + parallel mounting**
 
 Both scroll events and `ResizeObserver` can trigger a sync. Without protection the same chunk gets mounted twice — doubling memory and letting one instance overwrite the other's content. There is now re-entrancy protection plus in-flight deduplication, and all pending chunks mount in parallel.
+
+**4. Height table: Fenwick Tree**
+
+The height table used to be "array prefix sums + binary search", so updating one chunk's height meant an O(n) full rebuild. As a tree array, a single update drops to O(log n):
+
+| Chunks | Before (per update) | After | Speedup |
+|---|---|---|---|
+| 100 | 0.22 μs | 0.19 μs | 1.2x |
+| 1 000 | 6.04 μs | 0.23 μs | 26x |
+| 10 000 | 44.7 μs | 0.14 μs | 319x |
+| 100 000 | 933 μs | 0.31 μs | 2985x |
+
+**But to be clear: everyday document sizes won't benefit.** Measured at 80 chunks, layout computation accounts for 0.01% of scroll time — completely drowned out by browser rendering. You'd need roughly 35 000 chunks before Fenwick's advantage reaches 5% of scroll time.
+
+It stays because it costs nothing, has no side effects, and leaves headroom for very large documents.
+
+**5. Batched height measurement**
+
+Each chunk used to schedule its own `requestAnimationFrame` measurement. Now they are merged into a single pass at the end of a frame: read all heights first, then write everything back.
+
+**Measured benefit: zero.** Browsers defer style writes to the end of the frame, so alternating reads and writes within one frame does not trigger multiple layouts. All three modes (read-only / alternating read-write / batched read-write) produced an identical `LayoutCount`.
+
+It is kept anyway for two reasons: the logic is clearer (read phase and write phase are separated), and if `estimateHeight` is ever tuned to be more accurate — making the measurement path fire frequently — batching would then start to pay off.
+
+> Incidentally: the height estimate turns out to be quite accurate (1664 px actual vs 1644 px estimated for English text, a 1% error), so the measurement path rarely fires in practice. That is also the root reason why the optimizations above show no measurable gain in the browser: **the current bottleneck is browser rendering, not JS computation.**
 
 ### Instance recycling (`recycle`)
 
@@ -244,10 +269,13 @@ const { chunks, byId } = splitIntoChunks(md, 2)
 
 ```bash
 npm install
-npm run typecheck    # tsc --noEmit
-npm test             # tsx --test, 20 assertions
-npm run test:bench   # before/after performance comparison
-npm run build        # tsup → dist/
+npm run typecheck        # tsc --noEmit
+npm test                 # tsx --test, 27 assertions
+npm run test:bench       # scrolling performance comparison
+npm run test:layout      # height-table data structure benchmark (Fenwick vs array prefix sums)
+npm run test:browser     # real Chromium verification
+npm run test:layout-compare  # before/after layout comparison (baseline = git HEAD)
+npm run build            # tsup → dist/
 ```
 
 Tests run TypeScript directly via [tsx](https://github.com/privatenumber/tsx) with no extra build step. End-to-end tests are based on happy-dom and genuinely render ProseMirror DOM.
