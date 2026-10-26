@@ -183,10 +183,16 @@ const { chunks, byId } = splitIntoChunks(md, 2)
 
 ```bash
 npm install
-npm run typecheck
-npm test
-npm run build
+npm run typecheck    # tsc --noEmit
+npm test             # tsx --test,20 项
+npm run test:bench   # 性能基准对比
+npm run build        # tsup → dist/
 ```
+
+测试使用 [tsx](https://github.com/privatenumber/tsx) 运行 TypeScript,无需额外编译步骤。
+端到端测试基于 happy-dom,会真实渲染 ProseMirror DOM。
+
+CI 在 Node 20 / 22 上跑类型检查、测试、构建。
 
 ## License
 

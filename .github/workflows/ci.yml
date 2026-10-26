@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # Node 22 起才原生支持 --experimental-strip-types,
+        # 但测试改用 tsx 运行,20/22 皆可。保留 20 以验证向下兼容。
         node-version: [20, 22]
 
     steps:
