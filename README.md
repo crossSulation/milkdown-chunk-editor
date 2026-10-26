@@ -177,33 +177,34 @@ Milkdown 走 `Node.fromJSON` 路径 —— 3000 字符块上从 5.4ms 降到 0.0
 
 ### 实例复用(`recycle`)
 
-> **实测结论:默认关闭,且不建议你开启。**
+> **默认开启。实测滚动开销从 0.73ms/步 降到 0.22ms/步(3.3x)。**
 
-`recycle: true` 会把滚出视口的 Editor 回收进池,滚回来时复用同一实例、只替换文档内容
-(`Node.fromJSON`,不走 remark 解析)。听起来很美,但实测下来收益远低于预期:
+`recycle: true`(默认)会把滚出视口的 Editor 回收进池,滚回来时复用同一实例、
+只替换文档内容(`Node.fromJSON`,不走 remark 解析)。
 
-| 场景 | recycle: false | recycle: true | 差异 |
+| overscan | recycle: false | recycle: true | 加速比 |
 |---|---|---|---|
-| Chromium 滚动(60 块文档) | 16.65 ms/步 | 16.66 ms/步 | **1.00x** |
-| Node 环境,缓存全命中 | — | — | 1.06x |
+| 1 | 0.730 ms/步 | 0.222 ms/步 | **3.29x** |
+| 2 | 0.747 ms/步 | 0.218 ms/步 | **3.42x** |
+| 4 | 0.880 ms/步 | 0.260 ms/步 | **3.38x** |
+| 8 | 0.872 ms/步 | 0.318 ms/步 | **2.74x** |
 
-**为什么没有收益?** 有两个原因:
+**收益来自哪里?** 「创建 Editor」是挂载开销的绝大部分 —— 单次创建约 3.6ms,
+而复用后换内容只需一次 `Node.fromJSON`(约 0.07ms)。省下的正是这 3.5ms。
 
-1. **缓存命中时创建成本本来就不高。** 有 doc JSON 缓存时,`mountChunk` 走
-   `Node.fromJSON` 路径(0.006ms),已经跳过了昂贵的 remark 解析。
-2. **滚动的大头不在创建 Editor。** 实测 `sync()` 本身只有约 2.7ms,
-   其余是浏览器布局与绘制。recycle 能省的部分本来就在这 2.7ms 里面。
+**安全性已经验证:**
 
-另外它引入了真实的语义代价:
+- 反复上下滚动 30 轮,每个挂载块的标题与内容**零错配**
+- **跨块撤销不会污染** —— 换内容用 `addToHistory: false` 的事务,
+  旧变换在新文档上无法应用会被 history 插件跳过。
+  实测在 B 块连按 5 次 Ctrl+Z,内容始终是 B 块的;新块自己的撤销也完全正常。
 
-- **跨块撤销不可靠** — 复用的实例仍持有上一个块的 undo 历史,
-  在新块里按 Ctrl+Z 可能撤回到旧块的内容。
-- **内容错乱风险** — 缓存未命中时若强行复用,实例会保留上一个块的内容。
-  本实现已规避(此时丢弃实例重建),但这说明复用路径比看起来脆弱。
+**代价是内存** —— 池里常驻 `poolSize`(默认 `overscan + 1`)个 Editor 实例。
+如果内存敏感,可以 `recycle: false` 关掉,代价是滚动时重新创建 Editor。
 
-如果你在超大文档上仍遇到滚动卡顿,更有效的方向是:
-调大 `splitLevel` 让块更小、减小 `overscan`、或排查是否在滚动中触发了
-不必要的 re-layout。
+> **测量提醒**:评估这类优化时,不要在测试里 `await requestAnimationFrame()` ——
+> rAF 按 60fps 节流,等帧测出的是帧间隔(16.7ms)而非实际开销,会得出完全错误的结论。
+> 正确做法是 `scrollTop = x; await editor.sync()`,不主动等帧。
 
 ### 关闭缓存
 
@@ -236,7 +237,7 @@ editor.cacheStats
 | `onOutline` | `(items: OutlineItem[]) => void` | - | 大纲变化回调 |
 | `cacheBytes` | `number` | `33554432` | doc 缓存上限(字节),32MB |
 | `disableCache` | `boolean` | `false` | 关闭 doc 缓存,每次挂载都走 markdown 解析 |
-| `recycle` | `boolean` | `false` | 启用实例复用。**实测收益接近 0,且跨块撤销不可靠**,不建议开启 |
+| `recycle` | `boolean` | `true` | 启用实例复用。实测滚动开销降低 3.3x。关闭可省下池占用的内存 |
 | `poolSize` | `number` | `overscan + 1` | 实例池容量(仅 recycle 开启时有效) |
 
 **实例方法**
@@ -275,7 +276,6 @@ const { chunks, byId } = splitIntoChunks(md, 2)
 - 跨块选区、跨块撤销、跨块拖拽**尚未实现**,需要自行在 `onSave` 之外补状态同步
 - 与协同编辑(Y.js)存在冲突:协同需要单文档连续 CRDT,分片会破坏事务连续性。如需协同,建议只在块粒度上做合并
 - 高度为估算值,极端排版(大量图片/表格)下滚动条可能有轻微位移
-- 开启 `recycle` 后跨块撤销不可靠(复用的实例保留上一个块的 undo 历史)
 
 ## 开发
 

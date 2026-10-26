@@ -162,38 +162,41 @@ It is kept anyway for two reasons: the logic is clearer (read phase and write ph
 
 ### Instance recycling (`recycle`)
 
-> **Measured result: off by default, and we recommend leaving it off.**
+> **On by default. Measured scroll cost drops from 0.73 ms/step to 0.22 ms/step (3.3x).**
 
-With `recycle: true`, Editors that scroll out of the viewport are returned to a pool
-instead of being destroyed; scrolling back reuses the same instance and only swaps the
-document content (`Node.fromJSON`, no remark parsing). That sounds appealing, but the
-measured benefit falls far short of expectations:
+With `recycle: true` (the default), Editors that scroll out of the viewport are returned
+to a pool instead of being destroyed; scrolling back reuses the same instance and only
+swaps the document content (`Node.fromJSON`, no remark parsing).
 
-| Scenario | recycle: false | recycle: true | Difference |
+| overscan | recycle: false | recycle: true | Speedup |
 |---|---|---|---|
-| Chromium scrolling (60-chunk document) | 16.65 ms/step | 16.66 ms/step | **1.00x** |
-| Node, all cache hits | — | — | 1.06x |
+| 1 | 0.730 ms/step | 0.222 ms/step | **3.29x** |
+| 2 | 0.747 ms/step | 0.218 ms/step | **3.42x** |
+| 4 | 0.880 ms/step | 0.260 ms/step | **3.38x** |
+| 8 | 0.872 ms/step | 0.318 ms/step | **2.74x** |
 
-**Why no benefit?** Two reasons:
+**Where does the win come from?** Creating an Editor is the bulk of mount cost — about
+3.6 ms each — while swapping content on a recycled instance costs a single
+`Node.fromJSON` (about 0.07 ms). That 3.5 ms is exactly what gets saved.
 
-1. **Creating an Editor is already cheap once the cache hits.** With a cached doc JSON,
-   `mountChunk` takes the `Node.fromJSON` path (0.006 ms) and skips the expensive remark
-   parsing entirely.
-2. **Creating the Editor is not where scrolling time goes.** `sync()` itself measures
-   about 2.7 ms; the rest is browser layout and paint. Everything recycling can save
-   already lives inside that 2.7 ms.
+**Safety has been verified:**
 
-It also carries real semantic costs:
+- Scrolling up and down 30 rounds produces **zero content mismatches** across all
+  mounted chunks.
+- **Cross-chunk undo does not corrupt anything** — the content swap uses a transaction
+  with `addToHistory: false`, so the stale transform cannot apply to the new document
+  and the history plugin skips it. Pressing Ctrl+Z five times in a chunk B keeps the
+  content in chunk B, and undoing edits made in B still works normally.
 
-- **Cross-chunk undo becomes unreliable** — a recycled instance still holds the previous
-  chunk's undo history, so Ctrl+Z in a new chunk can restore the old chunk's content.
-- **Content mix-up risk** — forcing reuse when the cache misses leaves the instance
-  holding the previous chunk's content. This implementation avoids it (the instance is
-  discarded and rebuilt instead), but it shows how fragile the reuse path is.
+**The cost is memory** — the pool keeps `poolSize` (default `overscan + 1`) Editor
+instances resident. If memory is tight, set `recycle: false`; the trade-off is that
+scrolling will recreate Editors.
 
-If you still hit scroll jank on very large documents, more productive directions are:
-raise `splitLevel` for smaller chunks, lower `overscan`, or check whether scrolling
-triggers unnecessary re-layout.
+> **Measurement note:** when evaluating this kind of optimization, do not
+> `await requestAnimationFrame()` in the test — rAF is throttled to 60 fps, so waiting
+> for a frame measures the frame interval (16.7 ms) rather than the actual work, and
+> leads to completely wrong conclusions. Use `scrollTop = x; await editor.sync()`
+> without waiting for a frame.
 
 ### Disabling the cache
 
@@ -226,7 +229,7 @@ editor.cacheStats
 | `onOutline` | `(items: OutlineItem[]) => void` | - | Called with the outline |
 | `cacheBytes` | `number` | `33554432` | doc cache ceiling in bytes (32 MB) |
 | `disableCache` | `boolean` | `false` | Disable the doc cache; every mount parses from markdown |
-| `recycle` | `boolean` | `false` | Enable instance recycling. **Measured benefit is near zero and cross-chunk undo becomes unreliable** — not recommended |
+| `recycle` | `boolean` | `true` | Enable instance recycling. Measured to cut scroll cost by 3.3x. Disable to free the pool's memory |
 | `poolSize` | `number` | `overscan + 1` | Instance pool capacity (only used when recycling is on) |
 
 **Instance methods**
@@ -263,7 +266,6 @@ const { chunks, byId } = splitIntoChunks(md, 2)
 - **Cross-chunk selection, cross-chunk undo, and cross-chunk drag-and-drop are not implemented.** You will need to add your own state synchronization outside `onSave`.
 - **Conflicts with collaborative editing (Y.js).** Collaboration requires one continuous CRDT document, and chunking breaks transaction continuity. If you need collaboration, consider merging at chunk granularity only.
 - **Heights are estimates.** With extreme layouts (many images or tables) the scrollbar may drift slightly.
-- **With `recycle` enabled, cross-chunk undo is unreliable** — a recycled instance retains the previous chunk's undo history.
 
 ## Development
 

@@ -102,8 +102,11 @@ export interface MountedChunk {
    * 替换文档内容,用于复用场景。
    * 走 Node.fromJSON + tr.replace,不走 remark 解析(实测快约 40 倍)。
    * 会重置选区到文档开头,并抑制 dirty 标记。
+   *
+   * @returns 替换是否成功。失败(比如 schema 不兼容)时返回 false,
+   *          调用方必须丢弃这个实例并重建,否则会拿到上一个块的内容。
    */
-  replaceContent: (json: unknown) => void;
+  replaceContent: (json: unknown) => boolean;
   /**
    * 改写绑定的 chunk id。
    * 复用时同一个实例会先后承载不同的块,回写内容时必须知道当前是哪个块。
@@ -199,8 +202,8 @@ export async function mountChunk(opts: MountOptions): Promise<MountedChunk> {
    *   2. 用 CONTENT_REPLACE_META 标记,否则 dirty 会被误置为 true,
    *      白白触发一次 remark stringify
    */
-  const replaceContent = (json: unknown) => {
-    if (destroyed) return;
+  const replaceContent = (json: unknown): boolean => {
+    if (destroyed) return false;
     try {
       const view = editor.action((ctx) => ctx.get(editorViewCtx));
       const schema = editor.action((ctx) => ctx.get(schemaCtx));
@@ -235,8 +238,11 @@ export async function mountChunk(opts: MountOptions): Promise<MountedChunk> {
       // 内容已被替换,不应残留 dirty 状态
       dirty = false
       window.clearTimeout(debounceTimer)
+      return true
     } catch {
-      /* schema 不兼容等情况由调用方回退到重建 */
+      // schema 不兼容等异常:调用方需要知道替换失败了,
+      // 否则会拿着上一个块的内容当新内容用 —— 静默失败会造成数据错乱
+      return false
     }
   };
 

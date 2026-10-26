@@ -210,7 +210,25 @@ console.log('\n== 4. 回写到正确的 chunk ==')
   await inst.destroy()
 }
 
-console.log('\n== 5. 编辑器池 ==')
+console.log('\n== 5. 替换失败必须返回 false(否则会拿到旧内容)==')
+{
+  const slot = win.document.createElement('div') as unknown as DomEl
+  const inst = await mountChunk({ chunk: chunks[0], container: slot, onChange: () => {} })
+
+  // 用一个 schema 不兼容的 JSON —— fromJSON 会抛错
+  const badJson = { type: 'doc', content: [{ type: 'notARealNodeType' }] }
+  const result = inst.replaceContent(badJson)
+  check(result === false, '替换失败时返回 false')
+  console.log('  → 编排层据此销毁实例并重建,避免把上一个块的内容当新内容用')
+
+  // 正常 JSON 应返回 true
+  const goodJson = inst.editor.action((c) => c.get(editorViewCtx).state.doc).toJSON()
+  check(inst.replaceContent(goodJson) === true, '替换成功时返回 true')
+
+  await inst.destroy()
+}
+
+console.log('\n== 6. 编辑器池 ==')
 {
   const { EditorPool } = await import('../src/editor-pool.ts')
   const pool = new EditorPool({ maxSize: 2 })
