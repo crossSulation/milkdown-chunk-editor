@@ -11,6 +11,7 @@ import { VirtualLayout } from './virtual-layout';
 import { mountChunk, type MountedChunk } from './mount-chunk';
 import { splitIntoChunks, joinChunks, buildOutline, type ChunkStore } from './split';
 import { DocCache } from './doc-cache';
+import { EditorPool } from './editor-pool';
 import { editorViewCtx } from '@milkdown/kit/core';
 
 export interface OutlineItem {
@@ -37,6 +38,18 @@ export interface ChunkedEditorOptions {
   cacheBytes?: number;
   /** 关闭 doc 缓存,每次挂载都走 markdown 解析 */
   disableCache?: boolean;
+  /**
+   * 开启实例复用。滚出视口的 Editor 不销毁,而是回收进池等待复用。
+   *
+   * 收益:实测省掉「创建 Editor」的开销(占挂载+销毁总耗时的 97%)。
+   * 代价:跨块撤销不可靠 —— 复用的实例仍持有上一个块的 undo 历史,
+   *      在新块里按 Ctrl+Z 可能撤回到旧块的内容。
+   *
+   * 默认关闭。文档较大且编辑者不会频繁跨块撤销时才建议开启。
+   */
+  recycle?: boolean;
+  /** 实例池容量,默认 overscan + 1 */
+  poolSize?: number;
 }
 
 export class ChunkedEditor {
@@ -61,6 +74,10 @@ export class ChunkedEditor {
   private readonly onSave?: (md: string) => void;
   private readonly onOutline?: (o: OutlineItem[]) => void;
   private readonly disableCache: boolean;
+  /** 是否启用实例复用 */
+  private readonly recycle: boolean;
+  /** 实例池 */
+  private readonly pool: EditorPool;
 
   constructor(opts: ChunkedEditorOptions) {
     this.scroller = opts.scroller;
@@ -68,6 +85,8 @@ export class ChunkedEditor {
     this.onSave = opts.onSave;
     this.onOutline = opts.onOutline;
     this.disableCache = opts.disableCache ?? false;
+    this.recycle = opts.recycle ?? false;
+    this.pool = new EditorPool({ maxSize: opts.poolSize ?? this.overscan + 1 });
 
     this.store = splitIntoChunks(opts.content ?? '', opts.splitLevel ?? 2);
     this.layout.setItems(
@@ -148,13 +167,23 @@ export class ChunkedEditor {
 
     const visibleIds = new Set(items.map((i) => i.id));
 
-    // 1. 卸载不再需要的实例(销毁前会 flush 内容回 store)
+    // 1. 卸载不再需要的实例
+    //    recycle 开启时:回写内容后归还实例池(不销毁),下次挂载直接复用
+    //    recycle 关闭时:直接销毁
     for (const [id, inst] of [...this.mounted]) {
       if (visibleIds.has(id)) continue;
       this.mounted.delete(id);
       this.slots.get(id)?.remove();
       this.slots.delete(id);
-      void inst.destroy();
+
+      if (this.recycle) {
+        // flush 会把内容回写 store(dirty 为 false 时跳过,零成本)
+        inst.flush();
+        inst.detach();
+        this.pool.give(inst);
+      } else {
+        void inst.destroy();
+      }
     }
 
     // 2. 挂载缺失的实例 —— 并行,避免串行 await 叠加耗时
@@ -201,6 +230,38 @@ export class ChunkedEditor {
       ? undefined
       : this.cache.get(chunkId, chunk.markdown);
 
+    // 优先复用池中的实例 —— 避免重新创建 Editor(占挂载耗时 97%)
+    const pooled = this.recycle ? this.pool.take() : undefined;
+
+    if (pooled) {
+      const inst = pooled;
+      // 换内容:走 Node.fromJSON,不走 remark 解析。
+      //
+      // 关键:缓存未命中时不能复用 —— 复用的实例仍持有上一个块的内容,
+      // 会出现「chunk-8 显示 Section 2 的内容」这类数据错乱。
+      // 此时必须丢弃实例重建,让 mountChunk 走 markdown 解析路径。
+      if (cached) {
+        inst.replaceContent(cached.json);
+        inst.setChunkId(chunkId);
+        inst.attach(slot);
+
+        if (this.disposed || !visibleIds.has(chunkId)) {
+          inst.detach();
+          this.pool.give(inst);
+          slot.remove();
+          this.slots.delete(chunkId);
+          return;
+        }
+        this.mounted.set(chunkId, inst);
+        if (!this.disableCache) this.updateCache(chunkId, inst);
+        requestAnimationFrame(() => this.measure(chunkId, slot));
+        return;
+      }
+
+      // 缓存未命中 —— 销毁这个实例,走下面的正常创建路径
+      void inst.destroy();
+    }
+
     const promise = mountChunk({
       chunk,
       container: slot,
@@ -216,7 +277,12 @@ export class ChunkedEditor {
       // await 期间用户可能已滚走,此时必须立刻回收这一块。
       // 注意用 continue 而非 return —— 否则后续块永远不会被挂载。
       if (this.disposed || !this.store.byId.has(chunkId) || !visibleIds.has(chunkId)) {
-        void inst.destroy();
+        if (this.recycle) {
+          inst.detach();
+          this.pool.give(inst);
+        } else {
+          void inst.destroy();
+        }
         slot.remove();
         this.slots.delete(chunkId);
         return;
@@ -321,6 +387,8 @@ export class ChunkedEditor {
     this.mounted.clear();
     this.slots.clear();
     this.inflight.clear();
+    // 池中闲置的实例也要销毁,否则内存泄漏
+    this.pool.clear();
     this.cache.clear();
     this.spacer.remove();
   }

@@ -12,8 +12,11 @@ export type { Chunk, ChunkStore } from './split'
 export { VirtualLayout } from './virtual-layout'
 export type { Box } from './virtual-layout'
 
-export { mountChunk } from './mount-chunk'
+export { mountChunk, CONTENT_REPLACE_META } from './mount-chunk'
 export type { MountedChunk, MountOptions } from './mount-chunk'
+
+export { EditorPool } from './editor-pool'
+export type { PoolOptions } from './editor-pool'
 
 export { DocCache, fingerprint } from './doc-cache'
 export type { DocCacheEntry } from './doc-cache'

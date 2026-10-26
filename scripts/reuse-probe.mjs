@@ -42,8 +42,8 @@ const { mountChunk } = await import('../src/mount-chunk.ts')
 const { splitIntoChunks } = await import('../src/split.ts')
 const { DocCache } = await import('../src/doc-cache.ts')
 const { editorViewCtx, schemaCtx } = await import('@milkdown/kit/core')
-const { Node: PMNode } = await import('@milkdown/prose/model')
-const { TextSelection } = await import('@milkdown/prose/state')
+const { Node: PMNode, Slice } = await import('@milkdown/prose/model')
+
 
 // ---- 构造文档 ----
 function makeDoc(chunkCount, charsPerChunk) {
@@ -89,9 +89,7 @@ async function scenarioReuse(chunks, cache, rounds, poolSize) {
         const json = cache.get(chunk.id, chunk.markdown)?.json
         if (json) {
           const newDoc = PMNode.fromJSON(schema, json)
-          view.dispatch(view.state.tr.replace(0, view.state.doc.content.size, newDoc.content))
-          // 重置选区到开头,否则会残留上一个块的光标位置
-          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 0)))
+          view.dispatch(view.state.tr.replace(0, view.state.doc.content.size, new Slice(newDoc.content, 0, 0)))
         }
         // 换 DOM 宿主
         const slot = win.document.createElement('div')
