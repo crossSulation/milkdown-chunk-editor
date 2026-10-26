@@ -21,14 +21,17 @@ import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = join(root, 'scripts', '.browser-build')
-const oldDir = join(outDir, '..', '.old-impl')
 
 const NL = String.fromCharCode(10)
 
 // ---- 导出旧实现 ----
+// 放在仓库内的临时目录:esbuild 解析依赖时需要能找到 node_modules
+// 产物(旧版 bundle)写到系统临时目录,不进版本控制
+const workDir = join(root, 'scripts', '.old-impl')
+
 // 用 git show 逐文件取,避免依赖 tar 命令的跨平台参数差异
-await rm(oldDir, { recursive: true, force: true })
-await mkdir(oldDir, { recursive: true })
+await rm(workDir, { recursive: true, force: true })
+await mkdir(workDir, { recursive: true })
 {
   const files = execFileSync('git', ['ls-tree', '-r', '--name-only', 'HEAD', 'src'], {
     cwd: root,
@@ -41,7 +44,7 @@ await mkdir(oldDir, { recursive: true })
       cwd: root,
       maxBuffer: 10 * 1024 * 1024,
     })
-    const target = join(oldDir, file)
+    const target = join(workDir, file)
     await mkdir(dirname(target), { recursive: true })
     await writeFile(target, content)
   }
@@ -61,7 +64,7 @@ async function bundle(entryDir, outFile) {
 }
 
 await mkdir(outDir, { recursive: true })
-await bundle(oldDir, join(outDir, 'old.js'))
+await bundle(workDir, join(outDir, 'old.js'))
 await bundle(root, join(outDir, 'new.js'))
 await writeFile(join(outDir, 'style.css'), await readFile(join(root, 'src', 'style.css')))
 

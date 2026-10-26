@@ -5,6 +5,7 @@ node_modules/
 dist/
 *.tgz
 scripts/.browser-build/
+scripts/.old-impl/
 
 # 日志
 *.log
