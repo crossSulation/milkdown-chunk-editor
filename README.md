@@ -1,5 +1,7 @@
 # milkdown-chunk-editor
 
+[English](./README.en.md) | [简体中文](./README.md)
+
 面向大文档的 Milkdown 富文本编辑器:**按标题分片 + 视口虚拟化**,只为可视区域挂载编辑器实例。
 
 ## 为什么需要它
@@ -106,7 +108,7 @@ editor.destroy()
 
 块的 markdown 内容和上次挂载时相同,就没必要重新解析。
 用 FNV-1a 内容指纹判断是否变化,命中则直接注入 `{ type: 'json' }`,
-Milkdown 走 `Node.fromJSON` 路径,比 remark parse 快约 900 倍。
+Milkdown 走 `Node.fromJSON` 路径 —— 3000 字符块上从 5.4ms 降到 0.006ms。
 
 缓存按 LRU 淘汰,默认上限 32MB(可用 `cacheBytes` 调整)。
 
@@ -144,6 +146,8 @@ editor.cacheStats
 | `overscan` | `number` | `1` | 视口外多挂载几屏,越大越顺滑、开销越大 |
 | `onSave` | `(md: string) => void` | - | 内容变化回调(内部已防抖) |
 | `onOutline` | `(items: OutlineItem[]) => void` | - | 大纲变化回调 |
+| `cacheBytes` | `number` | `33554432` | doc 缓存上限(字节),32MB |
+| `disableCache` | `boolean` | `false` | 关闭 doc 缓存,每次挂载都走 markdown 解析 |
 
 **实例方法**
 
@@ -168,7 +172,10 @@ const { chunks, byId } = splitIntoChunks(md, 2)
 
 ## 性能要点
 
-- **不要用 `markdownUpdated`** —它每次按键都全量 stringify 整块文档,是大文档最主要的卡顿源。本包改用 `listenerCtx.updated` + 400ms 防抖。
+- **不要用 `markdownUpdated`** — 它每次按键都全量 stringify 整块文档,是大文档最主要的卡顿源。
+- **变更检测用自挂的 ProseMirror 插件** — 监听 `tr.docChanged`,而不是 `@milkdown/plugin-listener`
+  的 `updated` 回调。后者内部有 200ms debounce,会让「内容是否被改过」这个信号本身延迟,
+  卸载瞬间可能丢内容。
 - **实例销毁前必须 flush** — 滚出视口的实例会立即销毁,内容已在 `destroy()` 内自动序列化回 store。
 - **`content-visibility` 用 `auto` 而非 `hidden`** — `hidden` 会破坏 Ctrl+F 与无障碍树。
 - **高度回填只处理「变矮」** — 变高会推走下方内容造成阅读跳动,这类误差保留为占位高度。

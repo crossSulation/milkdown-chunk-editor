@@ -1,7 +1,7 @@
 {
   "name": "milkdown-chunk-editor",
   "version": "0.1.0",
-  "description": "面向大文档的 Milkdown 富文本编辑器:按标题分片 + 视口虚拟化,只挂载可见区域的编辑器实例",
+  "description": "Rich-text editor for large documents on Milkdown: splits by heading and virtualizes the viewport, mounting editor instances only for the visible region",
   "keywords": [
     "milkdown",
     "prosemirror",
@@ -10,7 +10,9 @@
     "richtext",
     "virtualization",
     "chunk",
-    "large-document"
+    "large-document",
+    "chunked-editor",
+    "virtual-scroll"
   ],
   "license": "MIT",
   "type": "module",
@@ -30,8 +32,17 @@
   "files": [
     "dist",
     "README.md",
+    "README.en.md",
     "LICENSE"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/crossSulation/milkdown-chunk-editor.git"
+  },
+  "homepage": "https://github.com/crossSulation/milkdown-chunk-editor#readme",
+  "bugs": {
+    "url": "https://github.com/crossSulation/milkdown-chunk-editor/issues"
+  },
   "engines": {
     "node": ">=18"
   },
