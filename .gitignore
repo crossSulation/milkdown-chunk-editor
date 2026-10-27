@@ -8,6 +8,7 @@ scripts/.browser-build/
 scripts/.old-impl/
 scripts/.baseline-impl/
 scripts/.no-dirty-impl/
+scripts/.variants/
 
 # 日志
 *.log

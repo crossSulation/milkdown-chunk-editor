@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = join(root, 'scripts', '.browser-build')
-const noDirtyDir = join(root, 'scripts', '.no-dirty-impl')
+const noDirtyDir = join(root, 'scripts', '.variants', 'no-dirty')
 
 await mkdir(outDir, { recursive: true })
 
@@ -79,7 +79,7 @@ const appLines = [
   'const MOD = new URLSearchParams(location.search).get("mod")',
   'async function run() {',
   "  const { ChunkedEditor } = await import(MOD)",
-  '  const ed = new ChunkedEditor({ scroller, content: CONTENT, splitLevel: 2, overscan: 1 })',
+  '  const ed = new ChunkedEditor({ scroller, content: CONTENT, splitLevel: 2, overscan: 1, recycle: false })',
   '  await ed.mount()',
   '  await new Promise(r => setTimeout(r, 300))',
   '  // 预热:走一遍全文让缓存填满',
@@ -146,7 +146,8 @@ for (let round = 0; round < 5; round++) {
   }
 }
 
-console.log('\n=== dirty 标记专项测量(40 块文档,60 步滚动)===\n')
+console.log('\n=== dirty 标记隔离测量(40 块文档,60 步滚动)===')
+console.log('固定配置:仅 doc JSON 缓存(recycle 关闭),唯一变量是 dirty 标记\n')
 console.log('版本'.padEnd(18) + '中位数'.padStart(10) + '最小'.padStart(10) + '全部样本');
 console.log('─'.repeat(76))
 for (const c of configs) {
