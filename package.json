@@ -55,6 +55,8 @@
     "test:browser": "npm run build && node scripts/browser-check.mjs",
     "test:recycle": "npm run build && node scripts/recycle-browser-check.mjs",
     "test:layout-compare": "npm run build && node scripts/layout-compare.mjs",
+    "test:optimizations": "node scripts/optimization-retest.mjs",
+    "test:dirty": "node scripts/dirty-benchmark.mjs",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "peerDependencies": {

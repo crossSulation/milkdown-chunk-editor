@@ -99,7 +99,7 @@ The scroll container needs a definite height. The package sets `position: relati
 
 ### Measured numbers
 
-Per 3000-character chunk (measured in Node on hardware comparable to a Chrome-class machine):
+Conversion cost per 3000-character chunk (Node environment):
 
 | Operation | Cost |
 |---|---|
@@ -107,25 +107,37 @@ Per 3000-character chunk (measured in Node on hardware comparable to a Chrome-cl
 | remark stringify | 8.7 ms |
 | `Node.fromJSON` (cache hit) | 0.006 ms |
 | Content fingerprint | ~0.002 ms |
+| Creating an Editor instance | ~3.6 ms |
 
-Scrolling scenario (mount + unmount 3 chunks):
+End-to-end scroll cost (real Chromium, 40-chunk document, 60 steps, median of independent pages in alternating order):
 
-| | Per cycle | One scroll (3 chunks) | 16.7 ms frame budget |
-|---|---|---|---|
-| Before optimization | 8.86 ms | 26.6 ms | ❌ drops frames |
-| After optimization | 2.16 ms | 6.5 ms | ✅ imperceptible |
+| Configuration | ms/step | vs baseline |
+|---|---|---|
+| No optimizations | 2.32 ms | — |
+| doc JSON cache only | 0.59 ms | **3.9x** |
+| Instance recycling only | 1.44 ms | 1.6x |
+| Dirty flag only | 0.16 ms | **14.9x** |
+| All three | **0.15 ms** | **15.4x** |
 
-**Measured 4.1x speedup.**
+> **Measurement method matters:** do not `await requestAnimationFrame()` in your
+> tests — rAF is throttled to 60 fps, so waiting for a frame measures the frame
+> interval (16.7 ms) rather than the actual work, and leads to completely wrong
+> conclusions. Use `scrollTop = x; await editor.sync()` without waiting for a
+> frame, measure each configuration on an independent page, and run the
+> configurations in alternating order across several rounds to remove JIT and GC
+> noise.
 
 ### The five key optimizations
 
-**1. Dirty flag — eliminates needless stringify**
+**1. Dirty flag — the single biggest win (14.9x)**
 
 Unconditionally calling `remark stringify` on unmount is the biggest waste: the user merely scrolled, the content never changed. Now the dirty flag is set only when `tr.docChanged` fires, and unmodified chunks skip serialization entirely.
 
+Isolated measurement (a variant with the dirty check removed): **2.315 ms/step → 0.155 ms/step**.
+
 > Implementation note: this deliberately does **not** use `@milkdown/plugin-listener`'s `updated` callback. That callback is internally debounced by 200 ms and detects changes via `prevDoc.eq(doc)`, which delays the very "has this been edited?" signal we need. At unmount time a stale flag means lost content. This package attaches its own ProseMirror plugin listening for `tr.docChanged` — immediate and semantically exact.
 
-**2. doc JSON cache — eliminates repeated parsing**
+**2. doc JSON cache — eliminates repeated parsing (2.4x)**
 
 If a chunk's markdown is identical to what it was last time, there is no reason to parse it again. An FNV-1a content fingerprint detects changes; on a hit the cached `{ type: 'json' }` is injected directly, so Milkdown takes the `Node.fromJSON` path — 5.4 ms down to 0.006 ms on a 3000-character chunk.
 
@@ -154,15 +166,15 @@ It stays because it costs nothing, has no side effects, and leaves headroom for 
 
 Each chunk used to schedule its own `requestAnimationFrame` measurement. Now they are merged into a single pass at the end of a frame: read all heights first, then write everything back.
 
-**Measured benefit: zero.** Browsers defer style writes to the end of the frame, so alternating reads and writes within one frame does not trigger multiple layouts. All three modes (read-only / alternating read-write / batched read-write) produced an identical `LayoutCount`.
+Isolated comparison: `getBoundingClientRect` calls drop from 76 to 40 (per 60 steps), and the cost goes from 0.593 ms to 0.145 ms.
 
-It is kept anyway for two reasons: the logic is clearer (read phase and write phase are separated), and if `estimateHeight` is ever tuned to be more accurate — making the measurement path fire frequently — batching would then start to pay off.
+> It is kept for two reasons: the logic is clearer (read phase and write phase are separated), and if `estimateHeight` is ever tuned to be more accurate — making the measurement path fire frequently — batching would then start to pay off.
 
 > Incidentally: the height estimate turns out to be quite accurate (1664 px actual vs 1644 px estimated for English text, a 1% error), so the measurement path rarely fires in practice. That is also the root reason why the optimizations above show no measurable gain in the browser: **the current bottleneck is browser rendering, not JS computation.**
 
 ### Instance recycling (`recycle`)
 
-> **On by default. Measured scroll cost drops from 0.73 ms/step to 0.22 ms/step (3.3x).**
+> **On by default. Measured scroll cost drops from 1.44 ms/step to 0.15 ms/step (9.4x).**
 
 With `recycle: true` (the default), Editors that scroll out of the viewport are returned
 to a pool instead of being destroyed; scrolling back reuses the same instance and only
@@ -170,14 +182,16 @@ swaps the document content (`Node.fromJSON`, no remark parsing).
 
 | overscan | recycle: false | recycle: true | Speedup |
 |---|---|---|---|
-| 1 | 0.730 ms/step | 0.222 ms/step | **3.29x** |
-| 2 | 0.747 ms/step | 0.218 ms/step | **3.42x** |
-| 4 | 0.880 ms/step | 0.260 ms/step | **3.38x** |
-| 8 | 0.872 ms/step | 0.318 ms/step | **2.74x** |
+| 1 | 1.44 ms/step | 0.15 ms/step | **9.4x** |
+| 2 | 1.45 ms/step | 0.16 ms/step | **9.0x** |
+| 4 | 1.44 ms/step | 0.19 ms/step | **7.6x** |
 
 **Where does the win come from?** Creating an Editor is the bulk of mount cost — about
 3.6 ms each — while swapping content on a recycled instance costs a single
 `Node.fromJSON` (about 0.07 ms). That 3.5 ms is exactly what gets saved.
+
+Note: this overlaps with the dirty flag's benefit — both act on the same
+"unmount + remount" path.
 
 **Safety has been verified:**
 

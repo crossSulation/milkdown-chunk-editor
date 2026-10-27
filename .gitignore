@@ -6,6 +6,8 @@ dist/
 *.tgz
 scripts/.browser-build/
 scripts/.old-impl/
+scripts/.baseline-impl/
+scripts/.no-dirty-impl/
 
 # 日志
 *.log
