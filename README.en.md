@@ -113,31 +113,50 @@ End-to-end scroll cost (real Chromium, 40-chunk document, 60 steps, median of in
 
 | Configuration | ms/step | vs baseline |
 |---|---|---|
-| No optimizations | 2.32 ms | — |
-| doc JSON cache only | 0.59 ms | **3.9x** |
-| Instance recycling only | 1.44 ms | 1.6x |
-| Dirty flag only | 0.16 ms | **14.9x** |
-| All three | **0.15 ms** | **15.4x** |
+| All three disabled | 1.92 ms | — |
+| doc JSON cache only | 0.57 ms | **3.4x** |
+| Instance recycling only | 1.63 ms | 1.2x |
+| Dirty flag only | 2.03 ms | 0.95x |
+| **All three enabled** | **0.15 ms** | **12.8x** |
 
-> **Measurement method matters:** do not `await requestAnimationFrame()` in your
-> tests — rAF is throttled to 60 fps, so waiting for a frame measures the frame
-> interval (16.7 ms) rather than the actual work, and leads to completely wrong
-> conclusions. Use `scrollTop = x; await editor.sync()` without waiting for a
-> frame, measure each configuration on an independent page, and run the
-> configurations in alternating order across several rounds to remove JIT and GC
-> noise.
+> **Measurement method matters** — I got this wrong twice:
+>   1. Do not `await requestAnimationFrame()` — rAF is throttled to 60 fps, so
+>      waiting for a frame measures the frame interval (16.7 ms), not the real work
+>   2. Measure each configuration on an **independent page** — otherwise the JIT
+>      and GC state from the previous one leaks into the next
+>   3. Run configurations in **alternating order** across several rounds
+>
+> Skipping these yields results like "the baseline is faster than the optimized
+> version" that make no sense and are impossible to track down.
+
+**Why are the individual gains small but the combined gain large?** All three act on
+the same code path, so their benefits overlap heavily:
+
+- The cache saves the **remark parse at mount**; the dirty flag saves the
+  **remark stringify at unmount**
+- Recycling bypasses both — reuse the instance (no parse) and skip unmount
+  serialization (no stringify)
+
+Isolated measurement of the dirty flag: fix the configuration to "cache only",
+then compare against a variant with the dirty check removed — **2.13 ms/step →
+0.57 ms/step (3.7x)**. With the cache disabled the dirty flag is nearly useless,
+because parse costs far more than stringify.
 
 ### The five key optimizations
 
-**1. Dirty flag — the single biggest win (14.9x)**
+**1. Dirty flag — skips needless serialization on unmount**
 
-Unconditionally calling `remark stringify` on unmount is the biggest waste: the user merely scrolled, the content never changed. Now the dirty flag is set only when `tr.docChanged` fires, and unmodified chunks skip serialization entirely.
+Unconditionally calling `remark stringify` on unmount is a pure waste: the user merely scrolled, the content never changed. Now the dirty flag is set only when `tr.docChanged` fires, and unmodified chunks skip serialization entirely.
 
-Isolated measurement (a variant with the dirty check removed): **2.315 ms/step → 0.155 ms/step**.
+Isolated measurement (fix the configuration to "cache only", compare against a variant with the dirty check removed): **2.13 ms/step → 0.57 ms/step (3.7x)**.
+
+> Note how it complements the cache: the cache saves the parse at mount, the dirty
+> flag saves the stringify at unmount. With the cache disabled the dirty flag is
+> nearly useless, because parse costs far more than stringify.
 
 > Implementation note: this deliberately does **not** use `@milkdown/plugin-listener`'s `updated` callback. That callback is internally debounced by 200 ms and detects changes via `prevDoc.eq(doc)`, which delays the very "has this been edited?" signal we need. At unmount time a stale flag means lost content. This package attaches its own ProseMirror plugin listening for `tr.docChanged` — immediate and semantically exact.
 
-**2. doc JSON cache — eliminates repeated parsing (2.4x)**
+**2. doc JSON cache — eliminates repeated parsing (3.4x)**
 
 If a chunk's markdown is identical to what it was last time, there is no reason to parse it again. An FNV-1a content fingerprint detects changes; on a hit the cached `{ type: 'json' }` is injected directly, so Milkdown takes the `Node.fromJSON` path — 5.4 ms down to 0.006 ms on a 3000-character chunk.
 
@@ -174,7 +193,7 @@ Isolated comparison: `getBoundingClientRect` calls drop from 76 to 40 (per 60 st
 
 ### Instance recycling (`recycle`)
 
-> **On by default. Measured scroll cost drops from 1.44 ms/step to 0.15 ms/step (9.4x).**
+> **On by default. Measured scroll cost drops from 1.63 ms/step to 0.16 ms/step (10.2x).**
 
 With `recycle: true` (the default), Editors that scroll out of the viewport are returned
 to a pool instead of being destroyed; scrolling back reuses the same instance and only
@@ -182,9 +201,9 @@ swaps the document content (`Node.fromJSON`, no remark parsing).
 
 | overscan | recycle: false | recycle: true | Speedup |
 |---|---|---|---|
-| 1 | 1.44 ms/step | 0.15 ms/step | **9.4x** |
-| 2 | 1.45 ms/step | 0.16 ms/step | **9.0x** |
-| 4 | 1.44 ms/step | 0.19 ms/step | **7.6x** |
+| 1 | 1.63 ms/step | 0.16 ms/step | **10.2x** |
+| 2 | 1.62 ms/step | 0.17 ms/step | **9.5x** |
+| 4 | 1.61 ms/step | 0.20 ms/step | **8.1x** |
 
 **Where does the win come from?** Creating an Editor is the bulk of mount cost — about
 3.6 ms each — while swapping content on a recycled instance costs a single
